@@ -1,24 +1,7 @@
-from openai.types.chat import ChatCompletionMessageParam
+"""Pydanticonf: Unified interfaces for LLM providers with YAML configuration support."""
 
-from pydanticonf.structify.factory import create_adapter
-from pydanticonf.structify.hooks import CompletionTrace
-from pydanticonf.structify.models import (
-    AnthropicProviderConfig,
-    AzureOpenAIProviderConfig,
-    CompletionResult,
-    GeminiProviderConfig,
-    OpenAIProviderConfig,
-    ProviderConfig,
-)
+from pydanticonf.settings import BaseSettingsWithYaml
 
 __all__ = [
-    "create_adapter",
-    "ChatCompletionMessageParam",
-    "CompletionResult",
-    "CompletionTrace",
-    "ProviderConfig",
-    "OpenAIProviderConfig",
-    "AnthropicProviderConfig",
-    "GeminiProviderConfig",
-    "AzureOpenAIProviderConfig",
+    "BaseSettingsWithYaml",
 ]

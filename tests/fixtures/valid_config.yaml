@@ -1,0 +1,43 @@
+app_name: ProductionApp
+debug: false
+port: 8080
+host: 0.0.0.0
+timeout: 30
+
+database:
+  driver: postgresql
+  host: db.example.com
+  port: 5432
+  name: production_db
+  user: db_user
+  pool_size: 20
+  ssl_enabled: true
+
+cache:
+  provider: redis
+  host: cache.example.com
+  port: 6379
+  ttl: 3600
+  max_connections: 50
+
+logging:
+  level: INFO
+  format: json
+  outputs:
+    - console
+    - file
+  file_path: /var/log/app.log
+
+features:
+  authentication: true
+  rate_limiting: true
+  websockets: false
+  api_versioning: true
+
+security:
+  cors_origins:
+    - https://example.com
+    - https://app.example.com
+  jwt_expiry: 3600
+  max_login_attempts: 5
+  session_timeout: 1800

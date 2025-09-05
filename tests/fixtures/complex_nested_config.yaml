@@ -1,0 +1,113 @@
+organization:
+  name: TechCorp
+  founded: 2020
+  headquarters:
+    country: USA
+    state: California
+    city: San Francisco
+    address:
+      street: 123 Tech St
+      zip: 94105
+      building:
+        name: Innovation Tower
+        floor: 15
+        suite: 1500
+
+  departments:
+    engineering:
+      head_count: 150
+      teams:
+        - name: Platform
+          size: 25
+          lead: John Doe
+          technologies:
+            - Python
+            - Go
+            - Kubernetes
+        - name: Frontend
+          size: 30
+          lead: Jane Smith
+          technologies:
+            - TypeScript
+            - React
+            - GraphQL
+    
+    product:
+      head_count: 50
+      teams:
+        - name: Core Product
+          size: 20
+          lead: Mike Johnson
+        - name: Growth
+          size: 15
+          lead: Sarah Wilson
+
+services:
+  api:
+    versions:
+      v1:
+        endpoint: /api/v1
+        deprecated: true
+        rate_limit: 100
+      v2:
+        endpoint: /api/v2
+        deprecated: false
+        rate_limit: 1000
+        features:
+          graphql: true
+          webhooks: true
+          batch_operations: true
+    
+  microservices:
+    auth:
+      port: 8001
+      replicas: 3
+      resources:
+        cpu: 500m
+        memory: 512Mi
+    payment:
+      port: 8002
+      replicas: 2
+      resources:
+        cpu: 1000m
+        memory: 1Gi
+
+infrastructure:
+  cloud_provider: AWS
+  regions:
+    - us-west-2
+    - eu-west-1
+    - ap-southeast-1
+  
+  kubernetes:
+    clusters:
+      production:
+        nodes: 20
+        node_type: m5.xlarge
+        autoscaling:
+          enabled: true
+          min: 10
+          max: 50
+      staging:
+        nodes: 5
+        node_type: m5.large
+        autoscaling:
+          enabled: false
+
+  databases:
+    - type: PostgreSQL
+      version: "14.5"
+      instances:
+        primary:
+          size: db.r5.2xlarge
+          storage: 1000
+        replicas:
+          - region: us-west-2
+            size: db.r5.xlarge
+          - region: eu-west-1
+            size: db.r5.xlarge
+    
+    - type: Redis
+      version: "7.0"
+      cluster_mode: true
+      nodes: 6

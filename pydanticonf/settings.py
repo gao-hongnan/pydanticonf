@@ -28,10 +28,11 @@ class BaseSettingsWithYaml(BaseSettings):
                 file_secret_settings=file_secret_settings,
             )
 
+        yaml_file_encoding = config.get("yaml_file_encoding") or "utf-8"
         yaml_settings = YamlConfigSettingsSource(
             settings_cls,
             yaml_file=yaml_file,
-            yaml_file_encoding=config.get("yaml_file_encoding", "utf-8"),
+            yaml_file_encoding=yaml_file_encoding,
         )
 
         return (
