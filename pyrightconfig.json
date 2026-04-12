@@ -21,7 +21,8 @@
     "reportPrivateUsage": false,
     "include": [
       "pydanticonf",
-      "tests"
+      "tests",
+      "playground"
     ],
     "exclude": [
       ".venv",
@@ -49,7 +50,14 @@
         "reportPrivateImportUsage": false,
         "reportUnusedImport": false,
         "reportUnusedVariable": false
+      },
+      {
+        "root": "playground",
+        "reportUnusedFunction": false,
+        "reportPrivateImportUsage": false,
+        "reportUnusedImport": false,
+        "reportUnusedVariable": false
       }
     ],
-    "extraPaths": []
+    "extraPaths": ["."]
 }
