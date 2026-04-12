@@ -6,6 +6,7 @@ as _target_ strings (e.g. "tests.unit.test_instantiate.OuterClass.InnerClass").
 
 from __future__ import annotations
 
+import functools
 from typing import Any
 
 import pytest
@@ -38,6 +39,11 @@ class SimpleTarget:
 def simple_function(a: int, b: int, *, k: int = 0) -> tuple[int, int, int]:
     """Simple target function for _args_ tests."""
     return (a, b, k)
+
+
+def varargs_function(*args: int, k: int = 0) -> tuple[int, ...]:
+    """Function accepting variable positional args for _args_ replacement tests."""
+    return args + (k,)
 
 
 class Wrapper:
@@ -257,3 +263,190 @@ class TestDynamicConfig:
 
         source = Path(base_module.__file__).read_text()
         assert "frostbound" not in source
+
+
+# ---------------------------------------------------------------------------
+# ABC-001-2A Tests: Core instantiate() recursive walker
+# ---------------------------------------------------------------------------
+
+# Target string constants for test configs
+_SIMPLE_TARGET = f"{__name__}.SimpleTarget"
+_WRAPPER_TARGET = f"{__name__}.Wrapper"
+_INNER_TARGET = f"{__name__}.Inner"
+_LAYER_TARGET = f"{__name__}.Layer"
+_GROUP_TARGET = f"{__name__}.Group"
+_FUNCTION_TARGET = f"{__name__}.simple_function"
+_VARARGS_TARGET = f"{__name__}.varargs_function"
+
+
+class TestInstantiate:
+    """Tests for the public instantiate() function (AC-003 through AC-007)."""
+
+    def test_basic_instantiation(self) -> None:
+        """instantiate creates an instance from a config dict."""
+        from pydanticonf.instantiate.instantiate import instantiate
+
+        result = instantiate({"_target_": _SIMPLE_TARGET, "x": 42})
+        assert isinstance(result, SimpleTarget)
+        assert result.x == 42
+
+    def test_partial_flag_returns_functools_partial(self) -> None:
+        """_partial_=True returns functools.partial instead of calling."""
+        from pydanticonf.instantiate.instantiate import instantiate
+
+        result = instantiate({"_target_": _SIMPLE_TARGET, "x": 1}, _partial_=True)
+        assert isinstance(result, functools.partial)
+        assert result.func is SimpleTarget
+        assert result.keywords == {"x": 1}
+        assert result.args == ()
+
+    def test_args_key_passed_as_positional(self) -> None:
+        """_args_ key passes values as positional args to target."""
+        from pydanticonf.instantiate.instantiate import instantiate
+
+        result = instantiate({"_target_": _FUNCTION_TARGET, "_args_": [1, 2], "k": 3})
+        assert result == (1, 2, 3)
+
+    def test_call_time_positional_replaces_config_args(self) -> None:
+        """Call-time *args REPLACE config's _args_ (AC-005, EC-006)."""
+        from pydanticonf.instantiate.instantiate import instantiate
+
+        result = instantiate({"_target_": _VARARGS_TARGET, "_args_": [1, 2]}, 7, 8, 9)
+        assert result == (7, 8, 9, 0)  # args replaced, k=0 default
+
+    def test_call_time_kwargs_override_wins(self) -> None:
+        """Call-time **overrides MERGE OVER config kwargs (AC-005, EC-009)."""
+        from pydanticonf.instantiate.instantiate import instantiate
+
+        result = instantiate({"_target_": _SIMPLE_TARGET, "x": 1}, x=99)
+        assert isinstance(result, SimpleTarget)
+        assert result.x == 99
+
+    def test_recursive_false_passes_nested_dict_unchanged(self) -> None:
+        """_recursive_=False passes nested _target_ dicts as plain dicts."""
+        from pydanticonf.instantiate.instantiate import instantiate
+
+        cfg = {
+            "_target_": _WRAPPER_TARGET,
+            "_recursive_": False,
+            "inner": {"_target_": _INNER_TARGET, "x": 1},
+        }
+        result = instantiate(cfg)
+        assert isinstance(result, Wrapper)
+        assert isinstance(result.inner, dict)
+        assert result.inner["_target_"] == _INNER_TARGET
+
+    def test_recursive_true_instantiates_nested(self) -> None:
+        """_recursive_=True (default) instantiates nested configs."""
+        from pydanticonf.instantiate.instantiate import instantiate
+
+        cfg = {
+            "_target_": _WRAPPER_TARGET,
+            "inner": {"_target_": _INNER_TARGET, "x": 1},
+        }
+        result = instantiate(cfg)
+        assert isinstance(result, Wrapper)
+        assert isinstance(result.inner, Inner)
+        assert result.inner.x == 1
+
+    def test_error_full_key_for_bad_nested_kwarg(self) -> None:
+        """Error carries full_key with bracket notation for list index."""
+        from pydanticonf.instantiate.errors import InstantiationError
+        from pydanticonf.instantiate.instantiate import instantiate
+
+        cfg = {
+            "_target_": _GROUP_TARGET,
+            "items": [{"_target_": _LAYER_TARGET, "warmpu": 0.1}],
+        }
+        with pytest.raises(InstantiationError) as exc_info:
+            instantiate(cfg)
+        err = exc_info.value
+        assert err.full_key == "items[0]"
+        assert _LAYER_TARGET in (err.target or "")
+        assert err.__cause__ is not None
+
+    def test_error_full_key_uses_bracket_index(self) -> None:
+        """Error full_key uses bracket notation for second list item."""
+        from pydanticonf.instantiate.errors import InstantiationError
+        from pydanticonf.instantiate.instantiate import instantiate
+
+        cfg = {
+            "_target_": _GROUP_TARGET,
+            "items": [
+                {"_target_": _LAYER_TARGET, "warmup": 0.1},
+                {"_target_": _LAYER_TARGET, "warmpu": 0.2},
+            ],
+        }
+        with pytest.raises(InstantiationError) as exc_info:
+            instantiate(cfg)
+        assert exc_info.value.full_key == "items[1]"
+
+    def test_error_chained_cause_is_original(self) -> None:
+        """InstantiationError.__cause__ is the original TypeError."""
+        from pydanticonf.instantiate.errors import InstantiationError
+        from pydanticonf.instantiate.instantiate import instantiate
+
+        cfg = {
+            "_target_": _GROUP_TARGET,
+            "items": [{"_target_": _LAYER_TARGET, "warmpu": 0.1}],
+        }
+        with pytest.raises(InstantiationError) as exc_info:
+            instantiate(cfg)
+        assert isinstance(exc_info.value.__cause__, TypeError)
+        msg = str(exc_info.value)
+        assert "Error in call to target" in msg
+
+    def test_partial_with_failed_locate_raises_error(self) -> None:
+        """_partial_=True with nonexistent target still raises error (EC-008)."""
+        from pydanticonf.instantiate.errors import InstantiationError
+        from pydanticonf.instantiate.instantiate import instantiate
+
+        with pytest.raises(InstantiationError):
+            instantiate({"_target_": "nonexistent.Bad", "_partial_": True})
+
+    def test_target_not_found_raises_instantiation_error(self) -> None:
+        """Nonexistent _target_ raises InstantiationError."""
+        from pydanticonf.instantiate.errors import InstantiationError
+        from pydanticonf.instantiate.instantiate import instantiate
+
+        with pytest.raises(InstantiationError) as exc_info:
+            instantiate({"_target_": "nonexistent.module.Class"})
+        assert exc_info.value.target == "nonexistent.module.Class"
+
+    def test_instantiate_with_dynamic_config(self) -> None:
+        """instantiate works with DynamicConfig instances."""
+        from pydanticonf.instantiate.base import DynamicConfig
+        from pydanticonf.instantiate.instantiate import instantiate
+
+        class FooConfig(DynamicConfig[SimpleTarget]):
+            pass
+
+        cfg = FooConfig.model_validate({"x": 42})
+        result = instantiate(cfg)
+        assert isinstance(result, SimpleTarget)
+        assert result.x == 42
+
+    def test_instantiate_dict_without_target_returns_dict(self) -> None:
+        """Dict without _target_ returns recursively walked dict."""
+        from pydanticonf.instantiate.instantiate import instantiate
+
+        result = instantiate({"a": 1, "b": {"c": 2}})
+        assert result == {"a": 1, "b": {"c": 2}}
+
+    def test_instantiate_list_returns_list(self) -> None:
+        """List input returns recursively walked list."""
+        from pydanticonf.instantiate.instantiate import instantiate
+
+        result = instantiate([1, {"_target_": _SIMPLE_TARGET, "x": 5}, 3])
+        assert result[0] == 1
+        assert isinstance(result[1], SimpleTarget)
+        assert result[1].x == 5
+        assert result[2] == 3
+
+    def test_instantiate_scalar_returns_scalar(self) -> None:
+        """Scalar input returns the scalar unchanged."""
+        from pydanticonf.instantiate.instantiate import instantiate
+
+        assert instantiate(42) == 42
+        assert instantiate("hello") == "hello"
+        assert instantiate(None) is None
