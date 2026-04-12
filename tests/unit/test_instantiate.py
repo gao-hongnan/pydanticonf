@@ -257,10 +257,10 @@ class TestDynamicConfig:
 
     def test_no_frostbound_imports(self) -> None:
         """base.py must not import from frostbound."""
+        import importlib
         from pathlib import Path
 
-        import pydanticonf.instantiate.base as base_module
-
+        base_module = importlib.import_module("pydanticonf.instantiate.base")
         source = Path(base_module.__file__).read_text()
         assert "frostbound" not in source
 
@@ -450,3 +450,87 @@ class TestInstantiate:
         assert instantiate(42) == 42
         assert instantiate("hello") == "hello"
         assert instantiate(None) is None
+
+
+# ---------------------------------------------------------------------------
+# ABC-001-3A/3B/3C Tests: Cleanup, wiring, and structural checks
+# ---------------------------------------------------------------------------
+
+
+class TestLegacyCleanup:
+    """Tests verifying legacy symbols are removed (AC-011)."""
+
+    def test_no_legacy_symbols_in_source(self) -> None:
+        """No frostbound, ConfigFactory, etc. in pydanticonf/ source."""
+        import subprocess
+
+        search_terms = [
+            "frostbound",
+            "register_dependency",
+            "clear_dependencies",
+            "get_registered_dependencies",
+            "ConfigFactory",
+            "BaseSettingsWithInstantiation",
+        ]
+        for term in search_terms:
+            result = subprocess.run(
+                ["grep", "-r", term, "pydanticonf/"],
+                capture_output=True,
+                text=True,
+            )
+            assert result.returncode != 0, f"Found '{term}' in pydanticonf/ source:\n{result.stdout}"
+
+    def test_subpackage_init_exports_three_symbols(self) -> None:
+        """pydanticonf.instantiate.__init__ exports 3 symbols."""
+        import importlib
+
+        # Access the module, not the function shadowed in parent namespace
+        inst_pkg = importlib.import_module("pydanticonf.instantiate")
+        assert hasattr(inst_pkg, "__all__")
+        assert sorted(inst_pkg.__all__) == [
+            "DynamicConfig",
+            "InstantiationError",
+            "instantiate",
+        ]
+
+
+class TestPublicAPI:
+    """Tests verifying the 4-symbol public API (AC-001, AC-010, SC-004)."""
+
+    def test_all_four_symbols_importable(self) -> None:
+        """All four public symbols import from pydanticonf root."""
+        from pydanticonf import (
+            BaseSettingsWithYaml,
+            DynamicConfig,
+            InstantiationError,
+            instantiate,
+        )
+
+        assert callable(instantiate)
+        assert isinstance(DynamicConfig, type)
+        assert isinstance(InstantiationError, type)
+        assert isinstance(BaseSettingsWithYaml, type)
+
+    def test_public_api_all_has_four_names(self) -> None:
+        """pydanticonf.__all__ has exactly 4 names."""
+        import pydanticonf
+
+        assert sorted(pydanticonf.__all__) == [
+            "BaseSettingsWithYaml",
+            "DynamicConfig",
+            "InstantiationError",
+            "instantiate",
+        ]
+
+    def test_pyproject_has_no_hydra_core(self) -> None:
+        """pyproject.toml [project] dependencies has no hydra-core."""
+        import tomllib
+        from pathlib import Path
+
+        pyproject = Path("pyproject.toml")
+        with pyproject.open("rb") as f:
+            data = tomllib.load(f)
+        deps = data.get("project", {}).get("dependencies", [])
+        dep_names = [d.split(">=")[0].split("==")[0].split("<")[0].strip() for d in deps]
+        assert "hydra-core" not in dep_names
+        assert len(deps) == 3
