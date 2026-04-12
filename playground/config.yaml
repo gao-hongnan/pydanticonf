@@ -1,0 +1,17 @@
+app_name: "pydanticonf-demo"
+debug: true
+pipeline:
+  _target_: "playground.components.Pipeline"
+  encoder:
+    _target_: "playground.components.Encoder"
+    dim: 512
+    num_layers: 6
+    dropout: 0.1
+  decoder:
+    _target_: "playground.components.Decoder"
+    dim: 512
+    num_layers: 6
+  tokenizer:
+    _target_: "playground.components.Tokenizer"
+    vocab_size: 32000
+    lowercase: true
