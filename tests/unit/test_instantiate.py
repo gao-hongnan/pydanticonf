@@ -6,11 +6,9 @@ as _target_ strings (e.g. "tests.unit.test_instantiate.OuterClass.InnerClass").
 
 from __future__ import annotations
 
-import functools
 from typing import Any
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Module-level target fixtures (used as _target_ strings in tests)
@@ -157,18 +155,14 @@ class TestLocate:
         """_locate resolves nested class via segment walking."""
         from pydanticonf.instantiate._locate import locate
 
-        result = locate(
-            "tests.unit.test_instantiate.OuterClass.InnerClass"
-        )
+        result = locate("tests.unit.test_instantiate.OuterClass.InnerClass")
         assert result is OuterClass.InnerClass
 
     def test_resolves_deeply_nested_class(self) -> None:
         """_locate resolves deeply nested class."""
         from pydanticonf.instantiate._locate import locate
 
-        result = locate(
-            "tests.unit.test_instantiate.OuterClass.DeepInner.Leaf"
-        )
+        result = locate("tests.unit.test_instantiate.OuterClass.DeepInner.Leaf")
         assert result is OuterClass.DeepInner.Leaf
 
     def test_empty_path_raises_import_error(self) -> None:
@@ -200,3 +194,66 @@ class TestLocate:
 
         with pytest.raises(ImportError):
             locate("nonexistent_module_xyz.Foo")
+
+
+# ---------------------------------------------------------------------------
+# ABC-001-1B Tests: DynamicConfig rewrite
+# ---------------------------------------------------------------------------
+
+
+class TestDynamicConfig:
+    """Tests for DynamicConfig after stripping dead methods (AC-008, EC-007)."""
+
+    def test_auto_injects_target_from_generic(self) -> None:
+        """DynamicConfig[T].model_validate auto-injects _target_ from T."""
+        from pydanticonf.instantiate.base import DynamicConfig
+
+        class FooConfig(DynamicConfig[SimpleTarget]):
+            pass
+
+        cfg = FooConfig.model_validate({"x": 1})
+        assert cfg.target_ == f"{SimpleTarget.__module__}.{SimpleTarget.__qualname__}"
+
+    def test_explicit_target_preserved(self) -> None:
+        """DynamicConfig with explicit _target_ keeps it."""
+        from pydanticonf.instantiate.base import DynamicConfig
+
+        class FooConfig(DynamicConfig[SimpleTarget]):
+            pass
+
+        cfg = FooConfig.model_validate({"_target_": "custom.path.Foo", "x": 1})
+        assert cfg.target_ == "custom.path.Foo"
+
+    def test_extra_fields_allowed(self) -> None:
+        """DynamicConfig allows extra fields."""
+        from pydanticonf.instantiate.base import DynamicConfig
+
+        class FooConfig(DynamicConfig[SimpleTarget]):
+            pass
+
+        cfg = FooConfig.model_validate({"x": 1, "y": 2, "z": 3})
+        assert cfg.x == 1
+        data = cfg.model_dump()
+        assert data["y"] == 2
+        assert data["z"] == 3
+
+    def test_no_get_target_parts_method(self) -> None:
+        """get_target_parts() must not exist after rewrite."""
+        from pydanticonf.instantiate.base import DynamicConfig
+
+        assert not hasattr(DynamicConfig, "get_target_parts")
+
+    def test_no_get_kwargs_method(self) -> None:
+        """get_kwargs() must not exist after rewrite."""
+        from pydanticonf.instantiate.base import DynamicConfig
+
+        assert not hasattr(DynamicConfig, "get_kwargs")
+
+    def test_no_frostbound_imports(self) -> None:
+        """base.py must not import from frostbound."""
+        from pathlib import Path
+
+        import pydanticonf.instantiate.base as base_module
+
+        source = Path(base_module.__file__).read_text()
+        assert "frostbound" not in source
