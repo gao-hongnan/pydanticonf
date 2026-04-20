@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 from pydantic_settings.sources import PydanticBaseSettingsSource
@@ -288,3 +290,157 @@ class TestBaseSettingsWithYaml:
         assert settings.bool_value is True
         assert settings.list_value == [1, 2, 3]
         assert settings.dict_value == {}
+
+
+class TestYamlFileInitKwarg:
+    """Per-instance ``_yaml_file=`` runtime override."""
+
+    def test_runtime_yaml_file_overrides_model_config(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """``_yaml_file=`` beats the class-level ``model_config['yaml_file']`` path."""
+        default_yaml = tmp_path / "defaults.yaml"
+        default_yaml.write_text(yaml.dump({"app_name": "FromDefaults"}))
+
+        override_yaml = tmp_path / "override.yaml"
+        override_yaml.write_text(yaml.dump({"app_name": "FromOverride"}))
+
+        class Settings(BaseSettingsWithYaml):
+            app_name: str = "builtin"
+            model_config = SettingsConfigDict(yaml_file=str(default_yaml))
+
+        assert Settings().app_name == "FromDefaults"
+        assert Settings(_yaml_file=str(override_yaml)).app_name == "FromOverride"
+        assert Settings(_yaml_file=override_yaml).app_name == "FromOverride"
+
+    def test_runtime_yaml_file_without_class_default(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Class need not declare ``yaml_file``; runtime kwarg alone is enough."""
+        yaml_path = tmp_path / "runtime.yaml"
+        yaml_path.write_text(yaml.dump({"app_name": "FromRuntime"}))
+
+        class Settings(BaseSettingsWithYaml):
+            app_name: str = "builtin"
+
+        assert Settings().app_name == "builtin"
+        assert Settings(_yaml_file=str(yaml_path)).app_name == "FromRuntime"
+
+    def test_runtime_override_does_not_leak_between_instantiations(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """After a ``_yaml_file=`` call, a subsequent no-kwarg call reverts to class default."""
+        default_yaml = tmp_path / "defaults.yaml"
+        default_yaml.write_text(yaml.dump({"app_name": "FromDefaults"}))
+
+        override_yaml = tmp_path / "override.yaml"
+        override_yaml.write_text(yaml.dump({"app_name": "FromOverride"}))
+
+        class Settings(BaseSettingsWithYaml):
+            app_name: str = "builtin"
+            model_config = SettingsConfigDict(yaml_file=str(default_yaml))
+
+        assert Settings(_yaml_file=str(override_yaml)).app_name == "FromOverride"
+        assert Settings().app_name == "FromDefaults"
+
+    def test_runtime_override_resets_on_validation_failure(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """ContextVar must be reset even when ``__init__`` raises a ValidationError."""
+        good_yaml = tmp_path / "good.yaml"
+        good_yaml.write_text(yaml.dump({"app_name": "Good", "port": 8000}))
+
+        bad_yaml = tmp_path / "bad.yaml"
+        bad_yaml.write_text(yaml.dump({"app_name": "Bad", "port": "not-an-int"}))
+
+        class Settings(BaseSettingsWithYaml):
+            app_name: str = "builtin"
+            port: int = 1
+
+        with pytest.raises(Exception):  # noqa: BLE001 - exact type is pydantic.ValidationError
+            Settings(_yaml_file=str(bad_yaml))
+
+        # If the ContextVar leaked, the next instantiation (no kwarg) would still
+        # try to load bad.yaml. It shouldn't.
+        assert Settings().app_name == "builtin"
+        assert Settings(_yaml_file=str(good_yaml)).app_name == "Good"
+
+    def test_runtime_override_is_concurrency_safe(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Concurrent asyncio instantiations with different ``_yaml_file=`` paths
+        must each see their own value. This is why we use a ContextVar.
+        """
+        yaml_a = tmp_path / "a.yaml"
+        yaml_a.write_text(yaml.dump({"app_name": "A"}))
+
+        yaml_b = tmp_path / "b.yaml"
+        yaml_b.write_text(yaml.dump({"app_name": "B"}))
+
+        class Settings(BaseSettingsWithYaml):
+            app_name: str = "builtin"
+
+        async def load(path: Path) -> str:
+            # Yield control so the scheduler can interleave.
+            await asyncio.sleep(0)
+            s = Settings(_yaml_file=str(path))
+            await asyncio.sleep(0)
+            return s.app_name
+
+        async def run() -> tuple[str, ...]:
+            results = await asyncio.gather(
+                *[load(yaml_a if i % 2 == 0 else yaml_b) for i in range(20)]
+            )
+            return tuple(results)
+
+        out = asyncio.run(run())
+        assert out == tuple("A" if i % 2 == 0 else "B" for i in range(20))
+
+    def test_runtime_yaml_file_encoding_override(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """``_yaml_file_encoding`` is honored for the runtime-supplied path."""
+        yaml_path = tmp_path / "latin1.yaml"
+        # A value that only round-trips cleanly in latin-1.
+        yaml_path.write_bytes(yaml.dump({"app_name": "café"}, allow_unicode=True).encode("latin-1"))
+
+        class Settings(BaseSettingsWithYaml):
+            app_name: str = "builtin"
+
+        assert (
+            Settings(_yaml_file=str(yaml_path), _yaml_file_encoding="latin-1").app_name == "café"
+        )
+
+    def test_env_var_still_overrides_runtime_yaml(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Source priority is preserved: env > ... > yaml, even for the runtime path.
+
+        Checks two things that would be indistinguishable with env alone:
+        - ``app_name`` is overridden by env (proves env > yaml)
+        - ``only_in_yaml`` is still loaded from yaml (proves yaml was consumed
+          rather than silently ignored)
+        """
+        yaml_path = tmp_path / "r.yaml"
+        yaml_path.write_text(
+            yaml.dump({"app_name": "FromYaml", "only_in_yaml": "yaml_value"})
+        )
+
+        class Settings(BaseSettingsWithYaml):
+            app_name: str = "builtin"
+            only_in_yaml: str = "builtin"
+            model_config = SettingsConfigDict(env_prefix="PCT_")
+
+        monkeypatch.setenv("PCT_APP_NAME", "FromEnv")
+
+        settings = Settings(_yaml_file=str(yaml_path))
+        assert settings.app_name == "FromEnv"
+        assert settings.only_in_yaml == "yaml_value"
