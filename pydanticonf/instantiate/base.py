@@ -37,7 +37,7 @@ class DynamicConfig(BaseModel, Generic[InstanceT]):
     target_: str = Field(..., alias="_target_")
 
     @classmethod
-    def model_validate(
+    def model_validate(  # type: ignore
         cls,
         obj: object,
         *,

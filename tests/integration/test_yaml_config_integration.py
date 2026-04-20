@@ -165,7 +165,6 @@ class TestYamlConfigIntegration:
             model_config = SettingsConfigDict(
                 yaml_file=str(valid_yaml_config),
                 env_file=".env",
-                env_prefix="APP_",
                 extra="allow",
             )
 
@@ -427,3 +426,52 @@ class TestYamlConfigIntegration:
             assert settings.port == 8080
             assert settings.host == "0.0.0.0"
             assert settings.timeout == 30
+
+    def test_runtime_yaml_file_end_to_end(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """One ``Settings`` class loaded against two different YAML files via
+        ``_yaml_file=``; env var still wins for the fields it sets.
+        """
+        prod_yaml = tmp_path / "prod.yaml"
+        prod_yaml.write_text(
+            yaml.dump(
+                {
+                    "app_name": "Prod",
+                    "port": 8080,
+                    "database": {"host": "prod.db", "port": 5432},
+                }
+            )
+        )
+        staging_yaml = tmp_path / "staging.yaml"
+        staging_yaml.write_text(
+            yaml.dump(
+                {
+                    "app_name": "Staging",
+                    "port": 7070,
+                    "database": {"host": "staging.db", "port": 5433},
+                }
+            )
+        )
+
+        class Settings(AppSettings):
+            # Same class, no ``yaml_file`` pinned — path is supplied per instance.
+            pass
+
+        prod = Settings(_yaml_file=str(prod_yaml))
+        staging = Settings(_yaml_file=str(staging_yaml))
+
+        assert prod.app_name == "Prod"
+        assert prod.port == 8080
+        assert prod.database.host == "prod.db"
+        assert staging.app_name == "Staging"
+        assert staging.port == 7070
+        assert staging.database.host == "staging.db"
+
+        # Env var precedence still holds against the runtime path.
+        monkeypatch.setenv("APP_APP_NAME", "EnvOverride")
+        with_env = Settings(_yaml_file=str(prod_yaml))
+        assert with_env.app_name == "EnvOverride"
+        assert with_env.database.host == "prod.db"
